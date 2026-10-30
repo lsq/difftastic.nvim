@@ -166,6 +166,12 @@ end
 --- Namespace for inline-mode diff extmarks.
 M.inline_ns = vim.api.nvim_create_namespace("difft-inline")
 
+--- Clear all inline-mode extmarks in a buffer.
+--- @param buf integer
+function M.clear_inline(buf)
+    vim.api.nvim_buf_clear_namespace(buf, M.inline_ns, 0, -1)
+end
+
 --- Apply riff-style marks to one rendered inline line.
 --- @param buf integer
 --- @param lnum integer 0-based buffer line

@@ -151,8 +151,25 @@ end
 --- Open the side-by-side diff panes.
 --- @param state table Plugin state
 function M.open(state)
+    local config = require("difftastic-nvim").config
     -- Move to the rightmost window (away from tree)
     vim.cmd("wincmd l")
+
+    if config.display_mode == "inline" then
+        -- Single pane: reuse right_win/right_buf so goto_file and
+        -- get_diff_win keep working unchanged.
+        state.right_win = vim.api.nvim_get_current_win()
+        state.right_buf = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_win_set_buf(state.right_win, state.right_buf)
+        state.left_win = nil
+        state.left_buf = nil
+
+        setup_diff_buffer(state.right_buf)
+        setup_diff_window(state.right_win)
+        return
+    end
+
+    -- side by side ()
 
     -- Current window becomes left diff pane
     state.left_win = vim.api.nvim_get_current_win()
@@ -176,6 +193,11 @@ end
 --- @param file table File data with rows, hunk_starts, language
 function M.render(state, file)
     local config = require("difftastic-nvim").config
+    if config.display_mode == "inline" then
+        M.render_inline(state, file)
+        return
+    end
+    -- side-by-side
     local rows = file.rows or {}
 
     M.hunk_positions = {}
@@ -277,12 +299,102 @@ function M.render(state, file)
     vim.api.nvim_win_set_cursor(state.right_win, { 1, 0 })
 end
 
+--- Buffer line (1-indexed) -> row index in file.rows / file.aligned_lines.
+--- Populated by render_inline; nil in side-by-side mode.
+M.line_to_row = nil
+
+--- Renders the diff riff-style: single column, "-old" / "+new" / " ctx" lines.
+--- @param state table Plugin state
+--- @param file table File data with rows, hunk_starts, language, aligned_lines
+function M.render_inline(state, file)
+    local config = require("difftastic-nvim").config
+    local buf = state.right_buf
+    local hl = require("difftastic-nvim.highlight")
+    local rows = file.rows or {}
+
+    M.line_to_row = {}
+    M.hunk_positions = {}
+
+    if #rows == 0 then
+        vim.bo[buf].modifiable = true
+        vim.api.nvim_buf_set_lines(buf, 0, -1, false, { "-- Empty --" })
+        vim.bo[buf].modifiable = false
+        return
+    end
+
+    local lines, marks = {}, {}
+
+    for i, row in ipairs(rows) do
+        local l_changed = not row.left.is_filler and #(row.left.highlights or {}) > 0
+        local r_changed = not row.right.is_filler and #(row.right.highlights or {}) > 0
+        local first_lnum = #lines + 1
+
+        if l_changed and r_changed then
+            -- modified row: "-old" then "+new"
+            table.insert(lines, "-" .. row.left.content)
+            table.insert(marks, { lnum = #lines - 1, side = row.left, kind = "delete", prefix = "-" })
+            table.insert(lines, "+" .. row.right.content)
+            table.insert(marks, { lnum = #lines - 1, side = row.right, kind = "add", prefix = "+" })
+            -- both buffer lines map back to the same row for goto_file
+            M.line_to_row[#lines - 1] = i
+            M.line_to_row[#lines] = i
+        elseif l_changed then
+            table.insert(lines, "-" .. row.left.content)
+            table.insert(marks, { lnum = #lines - 1, side = row.left, kind = "delete", prefix = "-" })
+            M.line_to_row[#lines] = i
+        elseif r_changed then
+            table.insert(lines, "+" .. row.right.content)
+            table.insert(marks, { lnum = #lines - 1, side = row.right, kind = "add", prefix = "+" })
+            M.line_to_row[#lines] = i
+        else
+            -- context line (take whichever side has content)
+            local c = not row.left.is_filler and row.left.content or row.right.content
+            table.insert(lines, " " .. c)
+            M.line_to_row[#lines] = i
+        end
+
+        -- hunk_starts indexes file.rows; map to the first emitted buffer line
+        for _, pos in ipairs(file.hunk_starts or {}) do
+            if pos == i - 1 then
+                table.insert(M.hunk_positions, first_lnum)
+                break
+            end
+        end
+    end
+
+    vim.bo[buf].modifiable = true
+    vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].modifiable = false
+
+    -- treesitter syntax coloring on the whole buffer
+    if config.highlight_mode ~= "difftastic" then
+        local ft = FILETYPES[file.language] or vim.filetype.match({ filename = vim.fn.fnamemodify(file.path, ":t") })
+        if ft then
+            ensure_treesitter(buf, ft)
+        end
+    end
+
+    -- token-level riff highlights
+    hl.clear_inline(buf)
+    for _, m in ipairs(marks) do
+        hl.apply_inline_line(buf, m.lnum, m.side, m.kind, m.prefix)
+    end
+
+    vim.api.nvim_win_set_cursor(state.right_win, { 1, 0 })
+end
+
 --- Get the current diff window (left or right).
 --- @param state table Plugin state
 --- @return number|nil Window handle or nil if invalid
 local function get_diff_win(state)
     local current = vim.api.nvim_get_current_win()
-    local win = current == state.right_win and state.right_win or state.left_win
+    -- cursor in right pane (or tree/inline): prefer right; else left (side-by-side)
+    local win
+    if current == state.right_win then
+        win = state.right_win
+    else
+        win = state.left_win or state.right_win
+    end
     if win and vim.api.nvim_win_is_valid(win) then
         return win
     end

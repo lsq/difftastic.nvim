@@ -18,6 +18,7 @@ M.config = {
     hunk_wrap_file = true,
     --- When true, scroll to first hunk after opening a file
     scroll_to_first_hunk = true,
+    display_mode = "side-by-side",
     keymaps = {
         next_file = "]f",
         prev_file = "[f",
@@ -100,6 +101,9 @@ function M.setup(opts)
     -- Merge config
     if opts.riff_style ~= nil then
         M.config.riff_style = opts.riff_style
+    end
+    if opts.display_mode then
+        M.config.display_mode = opts.display_mode
     end
     if opts.download ~= nil then
         M.config.download = opts.download
@@ -338,7 +342,22 @@ function M.goto_file()
     -- Get current cursor position (row is 1-indexed, col is 0-indexed)
     local cursor = vim.api.nvim_win_get_cursor(current_win)
     local row, col = cursor[1], cursor[2]
+    -- Inline mode: buffer line -> row index into file.aligned_lines,
+    -- and strip the 1-byte "-"/"+"/" " prefix from the column.
+    if M.config.display_mode == "inline" then
+        row = diff.line_to_row and diff.line_to_row[row] or row
+        col = math.max(0, col - 1)
+    end
     local aligned = file.aligned_lines and file.aligned_lines[row]
+
+    -- Inline mode: buffer line -> row index in file.aligned_lines
+    if M.config.display_mode == "inline" and diff.line_to_row then
+        row = diff.line_to_row[row] or row
+    end
+    -- Compensate for the "-"/"+"/" " prefix column in inline mode
+    if M.config.display_mode == "inline" and col > 0 then
+        col = col - 1
+    end
 
     -- Find the target line number (right side = new version)
     local target_line

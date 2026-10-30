@@ -44,8 +44,10 @@ local function setup_tree_keymaps(state)
 
     if keys.focus_diff then
         vim.keymap.set("n", keys.focus_diff, function()
-            if state.left_win and vim.api.nvim_win_is_valid(state.left_win) then
-                vim.api.nvim_set_current_win(state.left_win)
+            -- Inline mode has no left_win; fall back to right_win
+            local win = state.left_win or state.right_win
+            if win and vim.api.nvim_win_is_valid(win) then
+                vim.api.nvim_set_current_win(win)
             end
         end, { buffer = buf })
     end
@@ -60,10 +62,11 @@ end
 --- Setup all keymaps for the diff view.
 --- @param state table Plugin state
 function M.setup(state)
-    for _, buf in ipairs({ state.left_buf, state.right_buf }) do
-        if buf and vim.api.nvim_buf_is_valid(buf) then
-            setup_diff_keymaps(buf, state)
-        end
+    if state.left_buf and vim.api.nvim_buf_is_valid(state.left_buf) then
+        setup_diff_keymaps(state.left_buf, state)
+    end
+    if state.right_buf and vim.api.nvim_buf_is_valid(state.right_buf) then
+        setup_diff_keymaps(state.right_buf, state)
     end
 
     if state.tree_buf and vim.api.nvim_buf_is_valid(state.tree_buf) then
