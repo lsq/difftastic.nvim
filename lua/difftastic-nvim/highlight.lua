@@ -4,6 +4,7 @@ local M = {}
 --- Default opacity for background highlights (0-1)
 M.bg_opacity = 0.38
 M.line_bg_opacity = M.bg_opacity * 0.5
+M.riff_style = true
 
 --- Blend two colors with a given alpha.
 --- @param fg string Foreground hex color (e.g., "#ff0000")
@@ -50,6 +51,11 @@ end
 --- Linked highlight definitions (inherit from colorscheme)
 --- @type table<string, vim.api.keyset.highlight>
 M.linked = {
+    -- Inline (riff-style) gutter prefix colors
+    DifftInlineAddSign = { link = "Added" },
+    DifftInlineDelSign = { link = "Removed" },
+    DifftInlineContextSign = { link = "Comment" },
+
     -- Tree highlights
     DifftFileAdded = { link = "Added" },
     DifftFileDeleted = { link = "Removed" },
@@ -68,7 +74,6 @@ M.linked = {
     DifftPickerJjRevset = { link = "Identifier" },
     DifftPickerJjAge = { link = "Comment" },
 }
-
 
 --- Apply all highlight groups.
 --- @param overrides table<string, vim.api.keyset.highlight> User overrides
@@ -96,6 +101,12 @@ local function apply_highlights(overrides)
     local tree_panel_bg = blend(normal_fg, normal_bg, 0.03)
 
     local derived = {
+        -- Riff-style: stronger token emphasis, keeps fg for readability
+        DifftAddedRiff = { fg = added_fg, bg = added_bg, bold = true },
+        DifftRemovedRiff = { fg = removed_fg, bg = removed_bg, bold = true },
+        -- Stronger token emphasis for riff_style (bold on top of full-strength bg)
+        DifftAddedBold = { fg = added_fg, bg = added_bg, bold = true },
+        DifftRemovedBold = { fg = removed_fg, bg = removed_bg, bold = true },
         -- Background highlights (blended from fg colors)
         DifftAdded = { bg = added_bg },
         DifftRemoved = { bg = removed_bg },
@@ -150,6 +161,46 @@ function M.setup(overrides)
             apply_highlights(overrides)
         end,
     })
+end
+
+--- Namespace for inline-mode diff extmarks.
+M.inline_ns = vim.api.nvim_create_namespace("difft-inline")
+
+--- Apply riff-style marks to one rendered inline line.
+--- @param buf integer
+--- @param lnum integer 0-based buffer line
+--- @param side table  row.left / row.right
+--- @param kind "add"|"delete"
+--- @param prefix string "-"|"+"
+function M.apply_inline_line(buf, lnum, side, kind, prefix)
+    local ns = M.inline_ns
+    -- gutter sign
+    vim.api.nvim_buf_set_extmark(buf, ns, lnum, 0, {
+        end_col = #prefix,
+        hl_group = kind == "add" and "DifftInlineAddSign" or "DifftInlineDelSign",
+        priority = 150,
+    })
+    -- token spans, shifted right by the prefix width
+    local span_hl = kind == "add" and "DifftAddedRiff" or "DifftRemovedRiff"
+    local line_hl = kind == "add" and "DifftAddedLine" or "DifftRemovedLine"
+    for _, hl in ipairs(side.highlights or {}) do
+        if hl["end"] == -1 then
+            vim.api.nvim_buf_set_extmark(buf, ns, lnum, 0, {
+                end_row = lnum + 1,
+                end_col = 0,
+                hl_group = line_hl,
+                hl_eol = true,
+                priority = 100,
+            })
+        else
+            vim.api.nvim_buf_set_extmark(buf, ns, lnum, hl.start + #prefix, {
+                end_row = lnum,
+                end_col = hl["end"] + #prefix,
+                hl_group = span_hl,
+                priority = 200,
+            })
+        end
+    end
 end
 
 return M

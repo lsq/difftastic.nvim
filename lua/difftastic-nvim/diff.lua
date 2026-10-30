@@ -115,6 +115,11 @@ local function set_range_highlight(buf, ns, line, start_col, end_col, hl_group, 
     })
 end
 
+local function is_riff_style()
+    local ok, init = pcall(require, "difftastic-nvim")
+    return ok and init.config and init.config.riff_style == true and init.config.highlight_mode ~= "difftastic"
+end
+
 local function apply_diff_highlights(buf, ns, line, content, highlights, range_hl, line_hl)
     if #highlights == 0 then
         return
@@ -130,10 +135,16 @@ local function apply_diff_highlights(buf, ns, line, content, highlights, range_h
         return
     end
 
-    set_line_background(buf, ns, line, line_hl, 100)
+    -- riff style: no line background for partially-changed lines;
+    -- only the changed tokens get the strong highlight.
+    local riff = is_riff_style()
+    if not riff then
+        set_line_background(buf, ns, line, line_hl, 100)
+    end
 
+    local token_hl = riff and range_hl:gsub("Added$", "AddedRiff"):gsub("Removed$", "RemovedRiff") or range_hl
     for _, hl in ipairs(highlights) do
-        set_range_highlight(buf, ns, line, hl.start, hl["end"], range_hl, 200)
+        set_range_highlight(buf, ns, line, hl.start, hl["end"], token_hl, 200)
     end
 end
 
@@ -198,7 +209,7 @@ function M.render(state, file)
     -- Apply syntax highlighting based on mode
     local use_treesitter = config.highlight_mode ~= "difftastic"
     if use_treesitter then
-        local ft = FILETYPES[file.language] or vim.filetype.match({ filename = vim.fn.fnamemodify(file.path, ":t"), })
+        local ft = FILETYPES[file.language] or vim.filetype.match({ filename = vim.fn.fnamemodify(file.path, ":t") })
         if ft then
             ensure_treesitter(state.left_buf, ft)
             ensure_treesitter(state.right_buf, ft)
@@ -210,20 +221,42 @@ function M.render(state, file)
     vim.api.nvim_buf_clear_namespace(state.left_buf, left_ns, 0, -1)
     vim.api.nvim_buf_clear_namespace(state.right_buf, right_ns, 0, -1)
 
+    local riff = is_riff_style()
+    local removed_hl = use_treesitter and (riff and "DifftRemovedBold" or "DifftRemoved") or "DifftRemovedFg"
+    local added_hl = use_treesitter and (riff and "DifftAddedBold" or "DifftAdded") or "DifftAddedFg"
+
     -- Choose highlight groups based on mode
     -- treesitter mode: background colors
     -- difftastic mode: foreground colors (like CLI, bold)
-    local removed_hl = use_treesitter and "DifftRemoved" or "DifftRemovedFg"
-    local added_hl = use_treesitter and "DifftAdded" or "DifftAddedFg"
+    -- local removed_hl = use_treesitter and "DifftRemoved" or "DifftRemovedFg"
+    -- local added_hl = use_treesitter and "DifftAdded" or "DifftAddedFg"
     local removed_line_hl = "DifftRemovedLine"
     local added_line_hl = "DifftAddedLine"
+    -- local range_hl = is_riff_style() and (is_added and "DifftAddedBold" or "DifftRemovedBold")
+    -- or (is_added and "DifftAdded" or "DifftRemoved")
 
     -- Apply diff highlights (additions/removals)
     for i, row in ipairs(rows) do
         local line = i - 1
 
-        apply_diff_highlights(state.left_buf, left_ns, line, row.left.content, row.left.highlights, removed_hl, removed_line_hl)
-        apply_diff_highlights(state.right_buf, right_ns, line, row.right.content, row.right.highlights, added_hl, added_line_hl)
+        apply_diff_highlights(
+            state.left_buf,
+            left_ns,
+            line,
+            row.left.content,
+            row.left.highlights,
+            removed_hl,
+            removed_line_hl
+        )
+        apply_diff_highlights(
+            state.right_buf,
+            right_ns,
+            line,
+            row.right.content,
+            row.right.highlights,
+            added_hl,
+            added_line_hl
+        )
 
         if row.left.is_filler then
             vim.api.nvim_buf_set_extmark(state.left_buf, left_ns, line, 0, {

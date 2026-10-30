@@ -10,7 +10,8 @@ local keymaps = require("difftastic-nvim.keymaps")
 --- Default configuration
 M.config = {
     download = false,
-    vcs = "jj",
+    vcs = "git",
+    riff_style = false,
     --- Highlight mode: "treesitter" (full syntax) or "difftastic" (no syntax, colored changes only)
     highlight_mode = "treesitter",
     --- When true, next_hunk at last hunk wraps to next file (and prev_hunk to prev file)
@@ -97,6 +98,9 @@ function M.setup(opts)
     opts = opts or {}
 
     -- Merge config
+    if opts.riff_style ~= nil then
+        M.config.riff_style = opts.riff_style
+    end
     if opts.download ~= nil then
         M.config.download = opts.download
     end
